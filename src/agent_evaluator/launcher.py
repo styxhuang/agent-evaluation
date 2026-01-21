@@ -12,14 +12,14 @@ async def run_job(python_exe, runner_script, item_id, log_file, json_path=None, 
     # Ensure log directory exists
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     
-    cmd = [python_exe, runner_script, "--item_id", str(item_id), ""]
+    cmd = [python_exe, runner_script, "--item_id", str(item_id)]
     if json_path:
         cmd.extend(["--json_path", str(json_path)])
     if label_key:
         cmd.extend(["--label_key", str(label_key)])
     
     env = os.environ.copy()
-    
+    print(f"cmd: {' '.join(cmd)}")
     with open(log_file, "w") as f:
         process = await asyncio.create_subprocess_exec(
             *cmd,

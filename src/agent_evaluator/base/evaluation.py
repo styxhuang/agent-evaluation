@@ -133,15 +133,24 @@ async def _run_conversation(
                 new_message=content,
                 run_config=RunConfig(streaming_mode=StreamingMode.SSE),
             )
-
-            # 保存事件到本地 JSON 文件
+            
+            # ========================== #
+            # 收集所有事件以供查看和后续处理  #
+            # ========================== #
             events_list = []
             async for event in events:
+                # 打印每个事件的内容，方便调试查看
+                # print(f"DEBUG: Received event: {event}") 
+                
                 if event.content and event.content.parts:
                     for part in event.content.parts:
                         if part.text:
                             agent_response += part.text
-                # 将事件转换为字典并添加到列表
+                        # 如果你想看 function_call 内容：
+                        if part.function_call:
+                            print(f"DEBUG: Function Call: {part.function_call}")
+                            
+                # 将事件转换为字典并保存
                 events_list.append(dict(event))
 
             # 将事件保存到txt文件
@@ -252,22 +261,51 @@ async def _run_conversation(
     return eval_results
 
 
-async def evaluation_threads_task(file_path: str, max_turn_count: int = 10):
-    """批量测试所有数据"""
+async def evaluation_threads_single_task(
+    file_path: str,
+    item_id: int,
+    max_turn_count: int = 10,
+    label_key: str = '',
+    max_retries: int = 1,
+    base_backoff: float = 5.0,
+):
+    """测试单个数据（带重试）"""
     print('=' * 80)
     print('🤖 与ADK Agent多轮对话测试')
     print('=' * 80)
 
     dataset_json = json.loads(load_dataset_json(file_path))
-    results = []
-    for i, dataset_item in enumerate(dataset_json):
-        time.sleep(10)  # 避免请求过于频繁
-        result = await _run_conversation(
-            dataset_item, max_turn_count, save_mode='w' if i == 0 else 'a'
-        )
-        results.append(result)
+    dataset_item = dataset_json[item_id]
+    time.sleep(10)  # 避免请求过于频繁
+
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            result = await _run_conversation(
+                dataset_item,
+                max_turn_count,
+                save_mode='a',
+                item_id=item_id,
+                label_key=label_key,
+            )
+            # 成功则跳出重试循环
+            break
+        except asyncio.CancelledError:
+            # 取消应直接传播
+            logger.error('任务被取消，停止重试')
+            raise
+        except Exception as e:
+            attempt += 1
+            logger.error(f"第 {attempt} 次执行失败: {e}")
+            if attempt >= max_retries:
+                logger.error('已达到最大重试次数，抛出异常')
+                raise
+            backoff = base_backoff * (2 ** (attempt - 1))
+            print(f"⚠️ 第 {attempt} 次执行失败，{backoff} 秒后重试...")
+            await asyncio.sleep(backoff)
 
     print('\n' + '=' * 80)
-    print('🎉 多轮对话测试完成！')
+    print('🎉 单条多轮对话测试完成！')
     print('=' * 80)
-    return results
+
+    return result
